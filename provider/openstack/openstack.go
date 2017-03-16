@@ -25,57 +25,42 @@ import (
 // First it decides whether user wanted to get flavor by name or by criteria.
 // In case of flavor name, it retrieves data about that flavor and returns it.
 // In case of criteria (diskMB, memoryMB) it returns smallest flavor that meets all criteria.
-func GetOrPickFlavor(clientNova *gophercloud.ServiceClient, flavorName string, diskMB int64, memoryMB int64, verbose bool) (*flavors.Flavor, error) {
+func GetOrPickFlavor(c ConnectorI, flavorName string, diskMB int64, memoryMB int64, verbose bool) (*flavors.Flavor, error) {
 	if flavorName != "" {
-		return GetFlavor(clientNova, flavorName, verbose)
+		return c.GetFlavor(flavorName, verbose)
 	}
-	return PickFlavor(clientNova, diskMB, memoryMB, verbose)
+	return PickFlavor(c, diskMB, memoryMB, verbose)
 }
 
 // PickFlavor picks flavor that best matches criteria (i.e. HDD size and RAM size).
 // While diskMB is required, memoryMB is optional (set to -1 to ignore).
-func PickFlavor(clientNova *gophercloud.ServiceClient, diskMB int64, memoryMB int64, verbose bool) (*flavors.Flavor, error) {
+func PickFlavor(c ConnectorI, diskMB int64, memoryMB int64, verbose bool) (*flavors.Flavor, error) {
 	if diskMB <= 0 {
 		return nil, fmt.Errorf("Please specify disk size.")
 	}
 
-	var flavs []flavors.Flavor = listFlavors(clientNova, int(math.Ceil(float64(diskMB)/1024)), int(memoryMB))
+	var flavs []flavors.Flavor = c.ListFlavors(int(math.Ceil(float64(diskMB)/1024)), int(memoryMB))
 	return selectBestFlavor(flavs, verbose)
 }
 
-// GetFlavor returns flavors.Flavor struct for given flavorName.
-func GetFlavor(clientNova *gophercloud.ServiceClient, flavorName string, verbose bool) (*flavors.Flavor, error) {
-	flavorId, err := flavors.IDFromName(clientNova, flavorName)
-	if err != nil {
-		return nil, err
-	}
-
-	flavor, err := flavors.Get(clientNova, flavorId).Extract()
-	if err != nil {
-		return nil, err
-	}
-
-	return flavor, nil
-}
-
 // PushImage first creates meta for image at OpenStack, then it sends binary data for it, the qcow2 image.
-func PushImage(clientGlance *gophercloud.ServiceClient, imageName string, imageFilepath string, flavor *flavors.Flavor, verbose bool) {
+func PushImage(c ConnectorI, imageName string, imageFilepath string, flavor *flavors.Flavor, verbose bool) {
 	// Create metadata (on OpenStack).
-	imgId, _ := createImage(clientGlance, imageName, flavor, verbose)
+	imgId, _ := c.CreateImage(imageName, flavor, verbose)
 	// Send the image binary data to OpenStack
-	uploadImage(clientGlance, imgId, imageFilepath, verbose)
+	c.UploadImage(imgId, imageFilepath, verbose)
 }
 
 // LaunchInstances launches <count> instances. Return first error that occurs or nil on success.
-func LaunchInstances(clientNova *gophercloud.ServiceClient, name string, imageName string, flavorName string, count int, verbose bool) error {
+func LaunchInstances(c ConnectorI, name string, imageName string, flavorName string, count int, verbose bool) error {
 	var err error
 	if count <= 1 {
 		// Take name as it is.
-		err = launchServer(clientNova, name, flavorName, imageName, verbose)
+		err = c.LaunchServer(name, flavorName, imageName, verbose)
 	} else {
 		// Append index after the name of each instance.
 		for i := 0; i < count; i++ {
-			currErr := launchServer(clientNova, fmt.Sprintf("%s-%d", name, (i+1)), flavorName, imageName, verbose)
+			currErr := c.LaunchServer(fmt.Sprintf("%s-%d", name, (i+1)), flavorName, imageName, verbose)
 			if err == nil {
 				err = currErr
 			}
@@ -85,30 +70,20 @@ func LaunchInstances(clientNova *gophercloud.ServiceClient, name string, imageNa
 	return err
 }
 
-// GetImageMeta returns images.Image struct for given imageName.
-func GetImageMeta(clientNova *gophercloud.ServiceClient, imageName string, verbose bool) (*images.Image, error) {
-	imageId, err := images.IDFromName(clientNova, imageName)
-	if err != nil {
-		return nil, err
-	}
-
-	image, err := images.Get(clientNova, imageId).Extract()
-	if err != nil {
-		return nil, err
-	}
-
-	return image, nil
-}
-
 /*
-* Nova
+* Interface implementation
  */
 
-// listFlavors returns list of all flavors.
-func listFlavors(clientNova *gophercloud.ServiceClient, minDiskGB int, minMemoryMB int) []flavors.Flavor {
+type Connector struct {
+	clientNova   *gophercloud.ServiceClient
+	clientGlance *gophercloud.ServiceClient
+}
+
+// ListFlavors returns list of all flavors.
+func (c *Connector) ListFlavors(minDiskGB int, minMemoryMB int) []flavors.Flavor {
 	var flavs []flavors.Flavor = make([]flavors.Flavor, 0)
 
-	pagerFlavors := flavors.ListDetail(clientNova, flavors.ListOpts{
+	pagerFlavors := flavors.ListDetail(c.clientNova, flavors.ListOpts{
 		MinDisk: minDiskGB,
 		MinRAM:  minMemoryMB,
 	})
@@ -124,13 +99,13 @@ func listFlavors(clientNova *gophercloud.ServiceClient, minDiskGB int, minMemory
 	return flavs
 }
 
-// launchServer launches single server of given image.
-func launchServer(clientNova *gophercloud.ServiceClient, name string, flavorName string, imageName string, verbose bool) error {
-	resp := servers.Create(clientNova, servers.CreateOpts{
+// LaunchServer launches single server of given image.
+func (c *Connector) LaunchServer(name string, flavorName string, imageName string, verbose bool) error {
+	resp := servers.Create(c.clientNova, servers.CreateOpts{
 		Name:          name,
 		FlavorName:    flavorName,
 		ImageName:     imageName,
-		ServiceClient: clientNova, // need to pass this to perform name-to-ID lookup
+		ServiceClient: c.clientNova, // need to pass this to perform name-to-ID lookup
 	})
 	if verbose {
 		instance, err := resp.Extract()
@@ -144,13 +119,9 @@ func launchServer(clientNova *gophercloud.ServiceClient, name string, flavorName
 	return resp.Err
 }
 
-/*
-* Glance
- */
-
-// createImage creates image metadata on OpenStack.
-func createImage(clientGlance *gophercloud.ServiceClient, name string, flavor *flavors.Flavor, verbose bool) (string, error) {
-	createdImage, err := glanceImages.Create(clientGlance, glanceImages.CreateOpts{
+// CreateImage creates image metadata on OpenStack.
+func (c *Connector) CreateImage(name string, flavor *flavors.Flavor, verbose bool) (string, error) {
+	createdImage, err := glanceImages.Create(c.clientGlance, glanceImages.CreateOpts{
 		Name:            name,
 		Tags:            []string{"tagOSv", "tagCapstan"},
 		DiskFormat:      "qcow2",
@@ -164,8 +135,8 @@ func createImage(clientGlance *gophercloud.ServiceClient, name string, flavor *f
 	return createdImage.ID, err
 }
 
-// uploadImage uploads image binary data to existing OpenStack image metadata.
-func uploadImage(clientGlance *gophercloud.ServiceClient, imageId string, filepath string, verbose bool) error {
+// UploadImage uploads image binary data to existing OpenStack image metadata.
+func (c *Connector) UploadImage(imageId string, filepath string, verbose bool) error {
 	if verbose {
 		fmt.Printf("Uploading composed image '%s' to OpenStack\n", filepath)
 	}
@@ -176,13 +147,43 @@ func uploadImage(clientGlance *gophercloud.ServiceClient, imageId string, filepa
 	}
 	defer f.Close()
 
-	res := imagedata.Upload(clientGlance, imageId, f)
+	res := imagedata.Upload(c.clientGlance, imageId, f)
 	return res.Err
 }
 
-// deleteImage deletes image from OpenStack.
-func deleteImage(clientGlance *gophercloud.ServiceClient, imageId string) {
-	glanceImages.Delete(clientGlance, imageId)
+// DeleteImage deletes image from OpenStack.
+func (c *Connector) DeleteImage(imageId string) {
+	glanceImages.Delete(c.clientGlance, imageId)
+}
+
+// GetFlavor returns flavors.Flavor struct for given flavorName.
+func (c *Connector) GetFlavor(flavorName string, verbose bool) (*flavors.Flavor, error) {
+	flavorId, err := flavors.IDFromName(c.clientNova, flavorName)
+	if err != nil {
+		return nil, err
+	}
+
+	flavor, err := flavors.Get(c.clientNova, flavorId).Extract()
+	if err != nil {
+		return nil, err
+	}
+
+	return flavor, nil
+}
+
+// GetImageMeta returns images.Image struct for given imageName.
+func (c *Connector) GetImageMeta(imageName string, verbose bool) (*images.Image, error) {
+	imageId, err := images.IDFromName(c.clientNova, imageName)
+	if err != nil {
+		return nil, err
+	}
+
+	image, err := images.Get(c.clientNova, imageId).Extract()
+	if err != nil {
+		return nil, err
+	}
+
+	return image, nil
 }
 
 // selectBestFlavor selects optimal flavor for given conditions.

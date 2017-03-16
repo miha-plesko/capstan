@@ -10,10 +10,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/mikelangelo-project/capstan/provider/openstack"
 	"github.com/mikelangelo-project/capstan/util"
 	"github.com/urfave/cli"
-	"os"
 )
 
 // OpenStackPush picks best flavor, composes package, builds .qcow2 image and uploads it to OpenStack.
@@ -40,14 +41,14 @@ func OpenStackPush(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	clientNova, clientGlance, err := openstack.GetClients(credentials, verbose)
+	connector, err := openstack.GetConnector(credentials, verbose)
 	if err != nil {
 		return err
 	}
 
 	// Pick appropriate flavor.
 	diskMB, _ := util.ParseMemSize(c.String("size"))
-	flavor, err := openstack.GetOrPickFlavor(clientNova, c.String("flavor"), diskMB, -1, verbose)
+	flavor, err := openstack.GetOrPickFlavor(connector, c.String("flavor"), diskMB, -1, verbose)
 	if err != nil {
 		return err
 	}
@@ -81,7 +82,7 @@ func OpenStackPush(c *cli.Context) error {
 	// Push to OpenStack.
 	fmt.Println("Uploading image to OpenStack. This may take a while.")
 	imageFilepath := repo.ImagePath("qemu", appName)
-	openstack.PushImage(clientGlance, imageName, imageFilepath, flavor, verbose)
+	openstack.PushImage(connector, imageName, imageFilepath, flavor, verbose)
 	fmt.Printf("Image '%s' [src: %s] successfully uploaded to OpenStack.\n", imageName, packageDir)
 
 	return nil
@@ -108,13 +109,13 @@ func OpenStackRun(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	clientNova, _, err := openstack.GetClients(credentials, verbose)
+	connector, err := openstack.GetConnector(credentials, verbose)
 	if err != nil {
 		return err
 	}
 
 	// Obtain image metadata.
-	image, err := openstack.GetImageMeta(clientNova, imageName, verbose)
+	image, err := connector.GetImageMeta(imageName, verbose)
 	if err != nil {
 		return err
 	}
@@ -122,7 +123,7 @@ func OpenStackRun(c *cli.Context) error {
 	// Pick appropriate flavor.
 	diskMB := 1024 * int64(image.MinDisk)
 	memoryMB, _ := util.ParseMemSize(c.String("mem"))
-	flavor, err := openstack.GetOrPickFlavor(clientNova, c.String("flavor"), diskMB, memoryMB, verbose)
+	flavor, err := openstack.GetOrPickFlavor(connector, c.String("flavor"), diskMB, memoryMB, verbose)
 	if err != nil {
 		return err
 	}
@@ -137,7 +138,7 @@ func OpenStackRun(c *cli.Context) error {
 
 	// Launch instances.
 	fmt.Printf("Launching %d instances from image '%s'...\n", count, imageName)
-	err = openstack.LaunchInstances(clientNova, name, imageName, flavor.Name, count, verbose)
+	err = openstack.LaunchInstances(connector, name, imageName, flavor.Name, count, verbose)
 	if err != nil {
 		return err
 	}

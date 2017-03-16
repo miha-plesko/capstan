@@ -9,10 +9,11 @@ package openstack
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
 	"github.com/urfave/cli"
-	"os"
 )
 
 // OPENSTACK_CREDENTIALS_FLAGS is a list of argumets that are used for OpenStack authentication.
@@ -108,13 +109,13 @@ func AuthOptionsFromArgs(c *cli.Context) (*gophercloud.AuthOptions, error) {
 	return &ao, nil
 }
 
-// GetClients authenticates against OpenStack Identity and obtains Nova and Glance client.
+// GetConnector authenticates against OpenStack Identity and obtains Nova and Glance client.
 // Pass nil credentials to fetch it from environment.
-func GetClients(credentials *gophercloud.AuthOptions, verbose bool) (*gophercloud.ServiceClient, *gophercloud.ServiceClient, error) {
+func GetConnector(credentials *gophercloud.AuthOptions, verbose bool) (*Connector, error) {
 	// Perform authentication.
 	provider, err := openstack.AuthenticatedClient(*credentials)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Obtain different clients
@@ -125,5 +126,5 @@ func GetClients(credentials *gophercloud.AuthOptions, verbose bool) (*gopherclou
 		Region: os.Getenv("OS_REGION_NAME"),
 	})
 
-	return clientNova, clientGlance, nil
+	return &Connector{clientNova, clientGlance}, nil
 }
