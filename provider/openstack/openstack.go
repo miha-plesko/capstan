@@ -21,46 +21,101 @@ import (
 	"github.com/gophercloud/gophercloud/pagination"
 )
 
+// OpenStackComputeManager provides OpenStack Nova API interaction.
+type OpenStackComputeManager interface {
+	// ListFlavors returns list of flavors matching disk and mem criteria.
+	// Args:
+	// - minDiskGB   ... only list flavors with disk >= minDiskGB
+	// - minMemoryMB ... only list flavors with mem >= minMemoryMB
+	ListFlavors(int, int) []flavors.Flavor
+
+	// LaunchServer launches single server of given image.
+	// Args:
+	// - name       ... new server name
+	// - flavorName ... flavor to launch server with
+	// - imageName  ... image to base server on
+	// - verbose
+	LaunchServer(string, string, string, bool) error
+
+	// GetFlavor returns flavors.Flavor struct for given flavorName.
+	// Args:
+	// - flavorName ... flavor name e.g. m1.tiny
+	// - verbose
+	// Returns:
+	// - flavor
+	GetFlavor(string, bool) (*flavors.Flavor, error)
+
+	// GetImageMeta returns images.Image struct for given imageName.
+	// Args:
+	// - imageName
+	// - verbose
+	GetImageMeta(string, bool) (*images.Image, error)
+}
+
+// OpenStackImageManager provides OpenStack Glance API interaction.
+type OpenStackImageManager interface {
+	// CreateImage creates image metadata on OpenStack.
+	// Args:
+	// - name    ... new image name
+	// - flavor  ... flavor to fit image size to
+	// - verbose
+	// Returns:
+	// - imageId ... id of created image
+	CreateImage(string, *flavors.Flavor, bool) (string, error)
+
+	// UploadImage uploads image binary data to existing OpenStack image metadata.
+	// Args:
+	// - imageId  ... image metadata id returned by CreateImage
+	// - filepath ... path to .qcow2 image file
+	// - verbose
+	UploadImage(string, string, bool) error
+
+	// DeleteImage deletes image from OpenStack.
+	// Args:
+	// - imageId ... image metadata id returned by CreateImage
+	DeleteImage(string)
+}
+
 // GetOrPickFlavor returns flavors.Flavor struct that best matches arguments.
 // First it decides whether user wanted to get flavor by name or by criteria.
 // In case of flavor name, it retrieves data about that flavor and returns it.
 // In case of criteria (diskMB, memoryMB) it returns smallest flavor that meets all criteria.
-func GetOrPickFlavor(c ConnectorI, flavorName string, diskMB int64, memoryMB int64, verbose bool) (*flavors.Flavor, error) {
+func GetOrPickFlavor(m OpenStackComputeManager, flavorName string, diskMB int64, memoryMB int64, verbose bool) (*flavors.Flavor, error) {
 	if flavorName != "" {
-		return c.GetFlavor(flavorName, verbose)
+		return m.GetFlavor(flavorName, verbose)
 	}
-	return PickFlavor(c, diskMB, memoryMB, verbose)
+	return PickFlavor(m, diskMB, memoryMB, verbose)
 }
 
 // PickFlavor picks flavor that best matches criteria (i.e. HDD size and RAM size).
 // While diskMB is required, memoryMB is optional (set to -1 to ignore).
-func PickFlavor(c ConnectorI, diskMB int64, memoryMB int64, verbose bool) (*flavors.Flavor, error) {
+func PickFlavor(m OpenStackComputeManager, diskMB int64, memoryMB int64, verbose bool) (*flavors.Flavor, error) {
 	if diskMB <= 0 {
 		return nil, fmt.Errorf("Please specify disk size.")
 	}
 
-	var flavs []flavors.Flavor = c.ListFlavors(int(math.Ceil(float64(diskMB)/1024)), int(memoryMB))
+	var flavs []flavors.Flavor = m.ListFlavors(int(math.Ceil(float64(diskMB)/1024)), int(memoryMB))
 	return selectBestFlavor(flavs, verbose)
 }
 
 // PushImage first creates meta for image at OpenStack, then it sends binary data for it, the qcow2 image.
-func PushImage(c ConnectorI, imageName string, imageFilepath string, flavor *flavors.Flavor, verbose bool) {
+func PushImage(m OpenStackImageManager, imageName string, imageFilepath string, flavor *flavors.Flavor, verbose bool) {
 	// Create metadata (on OpenStack).
-	imgId, _ := c.CreateImage(imageName, flavor, verbose)
+	imgId, _ := m.CreateImage(imageName, flavor, verbose)
 	// Send the image binary data to OpenStack
-	c.UploadImage(imgId, imageFilepath, verbose)
+	m.UploadImage(imgId, imageFilepath, verbose)
 }
 
 // LaunchInstances launches <count> instances. Return first error that occurs or nil on success.
-func LaunchInstances(c ConnectorI, name string, imageName string, flavorName string, count int, verbose bool) error {
+func LaunchInstances(m OpenStackComputeManager, name string, imageName string, flavorName string, count int, verbose bool) error {
 	var err error
 	if count <= 1 {
 		// Take name as it is.
-		err = c.LaunchServer(name, flavorName, imageName, verbose)
+		err = m.LaunchServer(name, flavorName, imageName, verbose)
 	} else {
 		// Append index after the name of each instance.
 		for i := 0; i < count; i++ {
-			currErr := c.LaunchServer(fmt.Sprintf("%s-%d", name, (i+1)), flavorName, imageName, verbose)
+			currErr := m.LaunchServer(fmt.Sprintf("%s-%d", name, (i+1)), flavorName, imageName, verbose)
 			if err == nil {
 				err = currErr
 			}
@@ -70,20 +125,16 @@ func LaunchInstances(c ConnectorI, name string, imageName string, flavorName str
 	return err
 }
 
-/*
-* Interface implementation
- */
-
-type Connector struct {
+// openStackManager implements both OpenStackComputeManager and OpenStackImageManager interface.
+type openStackManager struct {
 	clientNova   *gophercloud.ServiceClient
 	clientGlance *gophercloud.ServiceClient
 }
 
-// ListFlavors returns list of all flavors.
-func (c *Connector) ListFlavors(minDiskGB int, minMemoryMB int) []flavors.Flavor {
+func (m *openStackManager) ListFlavors(minDiskGB int, minMemoryMB int) []flavors.Flavor {
 	var flavs []flavors.Flavor = make([]flavors.Flavor, 0)
 
-	pagerFlavors := flavors.ListDetail(c.clientNova, flavors.ListOpts{
+	pagerFlavors := flavors.ListDetail(m.clientNova, flavors.ListOpts{
 		MinDisk: minDiskGB,
 		MinRAM:  minMemoryMB,
 	})
@@ -99,13 +150,12 @@ func (c *Connector) ListFlavors(minDiskGB int, minMemoryMB int) []flavors.Flavor
 	return flavs
 }
 
-// LaunchServer launches single server of given image.
-func (c *Connector) LaunchServer(name string, flavorName string, imageName string, verbose bool) error {
-	resp := servers.Create(c.clientNova, servers.CreateOpts{
+func (m *openStackManager) LaunchServer(name string, flavorName string, imageName string, verbose bool) error {
+	resp := servers.Create(m.clientNova, servers.CreateOpts{
 		Name:          name,
 		FlavorName:    flavorName,
 		ImageName:     imageName,
-		ServiceClient: c.clientNova, // need to pass this to perform name-to-ID lookup
+		ServiceClient: m.clientNova, // need to pass this to perform name-to-ID lookup
 	})
 	if verbose {
 		instance, err := resp.Extract()
@@ -119,9 +169,8 @@ func (c *Connector) LaunchServer(name string, flavorName string, imageName strin
 	return resp.Err
 }
 
-// CreateImage creates image metadata on OpenStack.
-func (c *Connector) CreateImage(name string, flavor *flavors.Flavor, verbose bool) (string, error) {
-	createdImage, err := glanceImages.Create(c.clientGlance, glanceImages.CreateOpts{
+func (m *openStackManager) CreateImage(name string, flavor *flavors.Flavor, verbose bool) (string, error) {
+	createdImage, err := glanceImages.Create(m.clientGlance, glanceImages.CreateOpts{
 		Name:            name,
 		Tags:            []string{"tagOSv", "tagCapstan"},
 		DiskFormat:      "qcow2",
@@ -135,8 +184,7 @@ func (c *Connector) CreateImage(name string, flavor *flavors.Flavor, verbose boo
 	return createdImage.ID, err
 }
 
-// UploadImage uploads image binary data to existing OpenStack image metadata.
-func (c *Connector) UploadImage(imageId string, filepath string, verbose bool) error {
+func (m *openStackManager) UploadImage(imageId string, filepath string, verbose bool) error {
 	if verbose {
 		fmt.Printf("Uploading composed image '%s' to OpenStack\n", filepath)
 	}
@@ -147,23 +195,21 @@ func (c *Connector) UploadImage(imageId string, filepath string, verbose bool) e
 	}
 	defer f.Close()
 
-	res := imagedata.Upload(c.clientGlance, imageId, f)
+	res := imagedata.Upload(m.clientGlance, imageId, f)
 	return res.Err
 }
 
-// DeleteImage deletes image from OpenStack.
-func (c *Connector) DeleteImage(imageId string) {
-	glanceImages.Delete(c.clientGlance, imageId)
+func (m *openStackManager) DeleteImage(imageId string) {
+	glanceImages.Delete(m.clientGlance, imageId)
 }
 
-// GetFlavor returns flavors.Flavor struct for given flavorName.
-func (c *Connector) GetFlavor(flavorName string, verbose bool) (*flavors.Flavor, error) {
-	flavorId, err := flavors.IDFromName(c.clientNova, flavorName)
+func (m *openStackManager) GetFlavor(flavorName string, verbose bool) (*flavors.Flavor, error) {
+	flavorId, err := flavors.IDFromName(m.clientNova, flavorName)
 	if err != nil {
 		return nil, err
 	}
 
-	flavor, err := flavors.Get(c.clientNova, flavorId).Extract()
+	flavor, err := flavors.Get(m.clientNova, flavorId).Extract()
 	if err != nil {
 		return nil, err
 	}
@@ -171,14 +217,13 @@ func (c *Connector) GetFlavor(flavorName string, verbose bool) (*flavors.Flavor,
 	return flavor, nil
 }
 
-// GetImageMeta returns images.Image struct for given imageName.
-func (c *Connector) GetImageMeta(imageName string, verbose bool) (*images.Image, error) {
-	imageId, err := images.IDFromName(c.clientNova, imageName)
+func (m *openStackManager) GetImageMeta(imageName string, verbose bool) (*images.Image, error) {
+	imageId, err := images.IDFromName(m.clientNova, imageName)
 	if err != nil {
 		return nil, err
 	}
 
-	image, err := images.Get(c.clientNova, imageId).Extract()
+	image, err := images.Get(m.clientNova, imageId).Extract()
 	if err != nil {
 		return nil, err
 	}

@@ -111,7 +111,7 @@ func AuthOptionsFromArgs(c *cli.Context) (*gophercloud.AuthOptions, error) {
 
 // GetConnector authenticates against OpenStack Identity and obtains Nova and Glance client.
 // Pass nil credentials to fetch it from environment.
-func GetConnector(credentials *gophercloud.AuthOptions, verbose bool) (*Connector, error) {
+func GetManager(credentials *gophercloud.AuthOptions, verbose bool) (*openStackManager, error) {
 	// Perform authentication.
 	provider, err := openstack.AuthenticatedClient(*credentials)
 	if err != nil {
@@ -126,5 +126,5 @@ func GetConnector(credentials *gophercloud.AuthOptions, verbose bool) (*Connecto
 		Region: os.Getenv("OS_REGION_NAME"),
 	})
 
-	return &Connector{clientNova, clientGlance}, nil
+	return &openStackManager{clientNova, clientGlance}, nil
 }

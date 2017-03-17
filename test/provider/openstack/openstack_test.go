@@ -8,11 +8,12 @@
 package openstack_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/gophercloud/gophercloud/openstack/compute/v2/flavors"
 	"github.com/mikelangelo-project/capstan/provider/openstack"
-	"github.com/mikelangelo-project/capstan/test/mocks"
+	mocks "github.com/mikelangelo-project/capstan/test/mocks/provider/openstack"
 
 	. "gopkg.in/check.v1"
 )
@@ -23,22 +24,13 @@ type testingOpenstackSuite struct{}
 
 var _ = Suite(&testingOpenstackSuite{})
 
-func usualFlavors() []flavors.Flavor {
-	return []flavors.Flavor{
-		flavors.Flavor{Disk: 1, RAM: 512, ID: "f01", Name: "name-f01"},
-		flavors.Flavor{Disk: 1, RAM: 1024, ID: "f02", Name: "name-f02"},
-		flavors.Flavor{Disk: 10, RAM: 512, ID: "f03", Name: "name-f03"},
-		flavors.Flavor{Disk: 10, RAM: 2048, ID: "f04", Name: "name-f04"},
-		flavors.Flavor{Disk: 10, RAM: 1024, ID: "f05", Name: "name-f05"},
-		flavors.Flavor{Disk: 40, RAM: 1024, ID: "f06", Name: "name-f06"},
-		flavors.Flavor{Disk: 20, RAM: 1024, ID: "f07", Name: "name-f07"},
-		flavors.Flavor{Disk: 20, RAM: 4096, ID: "f08", Name: "name-f08"},
-		flavors.Flavor{Disk: 20, RAM: 2048, ID: "f09", Name: "name-f09"},
-		flavors.Flavor{Disk: 20, RAM: 512, ID: "f10", Name: "name-f10"},
-		flavors.Flavor{Disk: 100, RAM: 4096, ID: "f11", Name: "name-f11"},
-		flavors.Flavor{Disk: 100, RAM: 9999, ID: "f12", Name: "name-f12"},
-		flavors.Flavor{Disk: 100, RAM: 1, ID: "f13", Name: "name-f13"},
-	}
+type testPickFlavorManagerMock struct {
+	mocks.OpenStackComputeManagerMockBase
+	flavors []flavors.Flavor
+}
+
+func (m *testPickFlavorManagerMock) ListFlavors(minDiskGB int, minMemoryMB int) []flavors.Flavor {
+	return m.flavors
 }
 
 func (s *testingOpenstackSuite) TestPickFlavor(c *C) {
@@ -53,7 +45,9 @@ func (s *testingOpenstackSuite) TestPickFlavor(c *C) {
 		{
 			"disk size not specified",
 			0, 0, "",
-			[]flavors.Flavor{},
+			[]flavors.Flavor{
+				flavors.Flavor{Disk: 1, RAM: 512, ID: "f01", Name: "name-f01"},
+			},
 			"Please specify disk size.",
 		},
 		{
@@ -63,30 +57,63 @@ func (s *testingOpenstackSuite) TestPickFlavor(c *C) {
 			"No matching flavors to pick from",
 		},
 		{
-			"take optimal disk size",
-			40 * 1024, 0, "f06",
-			usualFlavors(),
+			"take optimal disk size (edge)",
+			20 * 1024, 0, "f03",
+			[]flavors.Flavor{
+				flavors.Flavor{Disk: 40, RAM: 1024, ID: "f01"},
+				flavors.Flavor{Disk: 30, RAM: 1024, ID: "f02"},
+				flavors.Flavor{Disk: 20, RAM: 1024, ID: "f03"},
+				flavors.Flavor{Disk: 25, RAM: 1024, ID: "f04"},
+				flavors.Flavor{Disk: 35, RAM: 1024, ID: "f05"},
+				flavors.Flavor{Disk: 45, RAM: 1024, ID: "f06"},
+			},
 			"",
 		},
 		{
-			"prefer smaller disk for equal memory",
-			1 * 1024, 1024, "f02",
-			usualFlavors(),
+			"take optimal disk size (non-edge)",
+			15 * 1024, 0, "f03",
+			[]flavors.Flavor{
+				flavors.Flavor{Disk: 40, RAM: 1024, ID: "f01"},
+				flavors.Flavor{Disk: 30, RAM: 1024, ID: "f02"},
+				flavors.Flavor{Disk: 20, RAM: 1024, ID: "f03"},
+				flavors.Flavor{Disk: 25, RAM: 1024, ID: "f04"},
+				flavors.Flavor{Disk: 35, RAM: 1024, ID: "f05"},
+				flavors.Flavor{Disk: 45, RAM: 1024, ID: "f06"},
+			},
 			"",
 		},
 		{
-			"prefer smaller disk regardless memory",
-			20 * 1024, 0, "f10",
-			usualFlavors(),
+			"take optimal disk size regardless memory",
+			10 * 1024, 0, "f03",
+			[]flavors.Flavor{
+				flavors.Flavor{Disk: 40, RAM: 1024, ID: "f01"},
+				flavors.Flavor{Disk: 30, RAM: 1024, ID: "f02"},
+				flavors.Flavor{Disk: 20, RAM: 4096, ID: "f03"},
+				flavors.Flavor{Disk: 25, RAM: 1024, ID: "f04"},
+				flavors.Flavor{Disk: 35, RAM: 1024, ID: "f05"},
+				flavors.Flavor{Disk: 45, RAM: 1024, ID: "f06"},
+			},
+			"",
+		},
+		{
+			"take optimal memory when equal disk size",
+			10 * 1024, 0, "f01",
+			[]flavors.Flavor{
+				flavors.Flavor{Disk: 10, RAM: 1024, ID: "f01"},
+				flavors.Flavor{Disk: 10, RAM: 8192, ID: "f02"},
+				flavors.Flavor{Disk: 10, RAM: 4096, ID: "f03"},
+				flavors.Flavor{Disk: 10, RAM: 2048, ID: "f04"},
+			},
 			"",
 		},
 	}
 	for _, args := range m {
 		c.Logf("CASE: %s", args.comment)
-		connector := &mocks.ConnectorMock{Flavors: args.flavors}
+
+		manager := &testPickFlavorManagerMock{flavors: args.flavors}
 
 		// This is what we're testing here.
-		flavor, err := openstack.PickFlavor(connector, int64(args.diskMB), int64(args.memoryMB), false)
+		flavor, err := openstack.PickFlavor(manager, int64(args.diskMB), int64(args.memoryMB), false)
 
 		// Expectations.
 		if args.err != "" {
@@ -99,33 +126,119 @@ func (s *testingOpenstackSuite) TestPickFlavor(c *C) {
 	}
 }
 
+func (s *testingOpenstackSuite) TestPickFlavorWithErrors(c *C) {
+	manager := &mocks.OpenStackComputeManagerMockBase{}
+
+	// This is what we're testing here.
+	flavor, err := openstack.PickFlavor(manager, 10*1024, 2048, false)
+
+	// Expectations.
+	c.Check(flavor, IsNil)
+	c.Check(err, NotNil)
+	c.Check(err, ErrorMatches, "No matching flavors to pick from")
+}
+
+type testGetOrPickFlavorManagerMock struct {
+	mocks.OpenStackComputeManagerMockBase
+}
+
+func (m *testGetOrPickFlavorManagerMock) ListFlavors(minDiskGB int, minMemoryMB int) []flavors.Flavor {
+	return []flavors.Flavor{
+		flavors.Flavor{ID: "flavor-01", Name: "foo"},
+	}
+}
+
+func (m *testGetOrPickFlavorManagerMock) GetFlavor(flavorName string, verbose bool) (*flavors.Flavor, error) {
+	return &flavors.Flavor{Name: flavorName}, nil
+}
+
 func (s *testingOpenstackSuite) TestGetOrPickFlavor(c *C) {
 	m := []struct {
 		comment    string
 		flavorName string
-		audit      []string
+		diskMB     int
+		memoryMB   int
 	}{
 		{
 			"get flavor by name",
 			"flavor1",
-			[]string{"GetFlavor(flavor1, false)"},
+			0, 0,
 		},
 		{
 			"get flavor by criteria",
 			"",
-			[]string{"ListFlavors(1, 0)"},
+			10 * 1024, 2048,
+		},
+		{
+			"criteria is ignored when flavor name present",
+			"flavor1",
+			10 * 1024, 2048,
 		},
 	}
 	for _, args := range m {
 		c.Logf("CASE: %s", args.comment)
-		connector := &mocks.ConnectorMock{Flavors: usualFlavors()}
+		manager := &testGetOrPickFlavorManagerMock{}
 
 		// This is what we're testing here.
-		openstack.GetOrPickFlavor(connector, args.flavorName, 1, 0, false)
+		flavor, err := openstack.GetOrPickFlavor(manager, args.flavorName, int64(args.diskMB), int64(args.memoryMB), false)
 
 		// Expectations.
-		c.Check(connector.GetAudit(), DeepEquals, args.audit)
+		c.Assert(flavor, NotNil)
+		c.Check(err, IsNil)
+		if args.flavorName != "" {
+			c.Check(flavor.Name, Equals, args.flavorName)
+		} else {
+			c.Check(flavor.ID, Equals, "flavor-01")
+		}
+
 	}
+}
+
+func (s *testingOpenstackSuite) TestGetOrPickFlavorWithErrors(c *C) {
+	m := []struct {
+		comment    string
+		flavorName string
+		err        string
+	}{
+		{
+			"get flavor by name",
+			"flavor1",
+			"mock not implemented",
+		},
+		{
+			"get flavor by criteria",
+			"",
+			"No matching flavors to pick from",
+		},
+	}
+	for _, args := range m {
+		manager := &mocks.OpenStackComputeManagerMockBase{}
+
+		// This is what we're testing here.
+		_, err := openstack.GetOrPickFlavor(manager, args.flavorName, 10*1024, 2048, false)
+
+		// Expectations.
+		c.Check(err, NotNil)
+		c.Check(err, ErrorMatches, args.err)
+	}
+}
+
+type testPushImageManagerMock struct {
+	mocks.OpenStackImageManagerMockBase
+	CreateImage_Name     string
+	CreateImage_Flavor   string
+	UploadImage_Filepath string
+}
+
+func (m *testPushImageManagerMock) CreateImage(name string, flavor *flavors.Flavor, verbose bool) (string, error) {
+	m.CreateImage_Name = name
+	m.CreateImage_Flavor = flavor.ID
+	return "created-image-id", nil
+}
+
+func (m *testPushImageManagerMock) UploadImage(imageId string, filepath string, verbose bool) error {
+	m.UploadImage_Filepath = filepath
+	return fmt.Errorf("mock not implemented")
 }
 
 func (s *testingOpenstackSuite) TestPushImage(c *C) {
@@ -133,25 +246,34 @@ func (s *testingOpenstackSuite) TestPushImage(c *C) {
 		comment   string
 		imageName string
 		imagePath string
-		audit     []string
+		flavor    flavors.Flavor
 	}{
 		{
 			"push image creates image meta and uploads data",
 			"img01", "/home/dir/file.qemu",
-			[]string{
-				"CreateImage(img01, f01, false)",
-				"UploadImage(id-img01, /home/dir/file.qemu, false)",
-			},
+			flavors.Flavor{ID: "flavor-01"},
 		},
 	}
 	for _, args := range m {
 		c.Logf("CASE: %s", args.comment)
-		connector := &mocks.ConnectorMock{Flavors: usualFlavors()}
+		manager := &testPushImageManagerMock{}
 
 		// This is what we're testing here.
-		openstack.PushImage(connector, args.imageName, args.imagePath, &connector.Flavors[0], false)
+		openstack.PushImage(manager, args.imageName, args.imagePath, &args.flavor, false)
 
 		// Expectations.
-		c.Check(connector.GetAudit(), DeepEquals, args.audit)
+		c.Check(manager.CreateImage_Name, Equals, args.imageName)
+		c.Check(manager.CreateImage_Flavor, Equals, args.flavor.ID)
+		c.Check(manager.UploadImage_Filepath, Equals, args.imagePath)
 	}
+}
+
+func (s *testingOpenstackSuite) TestPushImageWithErrors(c *C) {
+	manager := &mocks.OpenStackImageManagerMockBase{}
+
+	// This is what we're testing here.
+	openstack.PushImage(manager, "image-name", "/image/path", &flavors.Flavor{ID: "flavor-01"}, false)
+
+	// Expectations.
+	// TODO: refactor PushImage so that it returns error - it should fail when manager fails!
 }

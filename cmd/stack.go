@@ -41,14 +41,14 @@ func OpenStackPush(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	connector, err := openstack.GetConnector(credentials, verbose)
+	manager, err := openstack.GetManager(credentials, verbose)
 	if err != nil {
 		return err
 	}
 
 	// Pick appropriate flavor.
 	diskMB, _ := util.ParseMemSize(c.String("size"))
-	flavor, err := openstack.GetOrPickFlavor(connector, c.String("flavor"), diskMB, -1, verbose)
+	flavor, err := openstack.GetOrPickFlavor(manager, c.String("flavor"), diskMB, -1, verbose)
 	if err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func OpenStackPush(c *cli.Context) error {
 	// Push to OpenStack.
 	fmt.Println("Uploading image to OpenStack. This may take a while.")
 	imageFilepath := repo.ImagePath("qemu", appName)
-	openstack.PushImage(connector, imageName, imageFilepath, flavor, verbose)
+	openstack.PushImage(manager, imageName, imageFilepath, flavor, verbose)
 	fmt.Printf("Image '%s' [src: %s] successfully uploaded to OpenStack.\n", imageName, packageDir)
 
 	return nil
@@ -109,13 +109,13 @@ func OpenStackRun(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	connector, err := openstack.GetConnector(credentials, verbose)
+	manager, err := openstack.GetManager(credentials, verbose)
 	if err != nil {
 		return err
 	}
 
 	// Obtain image metadata.
-	image, err := connector.GetImageMeta(imageName, verbose)
+	image, err := manager.GetImageMeta(imageName, verbose)
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func OpenStackRun(c *cli.Context) error {
 	// Pick appropriate flavor.
 	diskMB := 1024 * int64(image.MinDisk)
 	memoryMB, _ := util.ParseMemSize(c.String("mem"))
-	flavor, err := openstack.GetOrPickFlavor(connector, c.String("flavor"), diskMB, memoryMB, verbose)
+	flavor, err := openstack.GetOrPickFlavor(manager, c.String("flavor"), diskMB, memoryMB, verbose)
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func OpenStackRun(c *cli.Context) error {
 
 	// Launch instances.
 	fmt.Printf("Launching %d instances from image '%s'...\n", count, imageName)
-	err = openstack.LaunchInstances(connector, name, imageName, flavor.Name, count, verbose)
+	err = openstack.LaunchInstances(manager, name, imageName, flavor.Name, count, verbose)
 	if err != nil {
 		return err
 	}
