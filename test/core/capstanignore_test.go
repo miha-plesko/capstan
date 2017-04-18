@@ -8,6 +8,8 @@
 package core_test
 
 import (
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/mikelangelo-project/capstan/core"
@@ -157,13 +159,83 @@ func (s *testingCapstanignoreSuite) TestIsIgnored(c *C) {
 		c.Logf("CASE #%d: %s", i, args.comment)
 
 		// Setup
-		capstanignore := core.CapstanignoreInit("")
+		capstanignore, _ := core.CapstanignoreInit("")
 		capstanignore.AddPattern(args.pattern)
+		capstanignore.CompilePatterns()
 
 		// This is what we're testing here.
 		ignoreYesNo := capstanignore.IsIgnored(args.path)
 
 		// Expectations.
 		c.Check(ignoreYesNo, Equals, args.shouldIgnore)
+	}
+}
+
+//
+// Run benchmarks like this: `go test ./test/... -bench=. -check.b`
+//
+
+// Measured results:
+// - having a list of regexp:                      92.176 ns/op
+// - having a single regexp (reg1|reg2|reg3|...): 760.719 ns/op
+func (s *testingCapstanignoreSuite) BenchmarkIsIgnored(c *C) {
+	// Add a lot of non-matching patterns at the beginning
+	// and finally a matching pattern at the very end. This
+	// way `n` comparisons will be performed for sure.
+	n := 1000
+	capstanignore, _ := core.CapstanignoreInit("")
+	for i := 0; i < n; i++ {
+		capstanignore.AddPattern("/this/will/not/match/*")
+	}
+	capstanignore.AddPattern("/this/is/a/match")
+	capstanignore.CompilePatterns()
+
+	path := "/this/is/a/match"
+	for i := 0; i < c.N; i++ {
+		capstanignore.IsIgnored(path)
+	}
+}
+
+// Measured results:
+// - using "/this/is/a/match" clutter:   92.531 ns/op
+// - using "^/this/is/a/match$" clutter: 96.638 ns/op
+func (s *testingCapstanignoreSuite) BenchmarkArray(c *C) {
+	n := 1000
+	var compiledPatterns []*regexp.Regexp
+	clutter := "^/this/will/not/match/.*$"
+	for i := 0; i < n; i++ {
+		compiledPatterns = append(compiledPatterns, regexp.MustCompile(clutter))
+	}
+	compiledPatterns = append(compiledPatterns, regexp.MustCompile("^/this/is/a/match$"))
+
+	path := "/this/is/a/match"
+	for i := 0; i < c.N; i++ {
+		isIgnored := false
+		for _, pattern := range compiledPatterns {
+			isIgnoredCurr := pattern.MatchString(path)
+			isIgnored = isIgnored || isIgnoredCurr
+		}
+		c.Assert(isIgnored, Equals, true)
+	}
+}
+
+// Measured results:
+// - using "/this/is/a/match" clutter:   1.591 ns/op
+// - using "^/this/is/a/match$" clutter: 656.719 ns/op
+func (s *testingCapstanignoreSuite) BenchmarkOr(c *C) {
+	n := 1000
+	pattern := ""
+	clutter := "^/this/will/not/match/.*$"
+	for i := 0; i < n; i++ {
+		pattern = pattern + "|" + clutter
+	}
+	pattern = pattern + "|/this/is/a/match"
+	pattern = strings.TrimLeft(pattern, "|")
+	compiledPattern := regexp.MustCompile(pattern)
+
+	path := "^/this/is/a/match$"
+	for i := 0; i < c.N; i++ {
+		isIgnored := compiledPattern.MatchString(path)
+		c.Assert(isIgnored, Equals, true)
 	}
 }

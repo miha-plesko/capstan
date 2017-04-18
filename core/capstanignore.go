@@ -17,7 +17,8 @@ import (
 
 type Capstanignore interface {
 	LoadFile(path string) error
-	AddPattern(pattern string) error
+	AddPattern(pattern string)
+	CompilePatterns() error
 	PrintPatterns()
 	IsIgnored(path string) bool
 }
@@ -49,8 +50,8 @@ func CapstanignoreInit(path string) (Capstanignore, error) {
 }
 
 type capstanignore struct {
-	patterns         []string         // list of all ignored patterns
-	compiledPatterns []*regexp.Regexp // list of compiled patterns
+	patterns        []string       // list of all ignored patterns
+	compiledPattern *regexp.Regexp // list of compiled patterns
 }
 
 // LoadFile attempts to parse .capstanignore file on given path.
@@ -65,10 +66,12 @@ func (c *capstanignore) LoadFile(path string) error {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			if errPattern := c.AddPattern(line); errPattern != nil {
-				return errPattern
-			}
+			c.AddPattern(line)
 		}
+		if errPattern := c.CompilePatterns(); err != nil {
+			return errPattern
+		}
+
 	} else {
 		return err
 	}
@@ -76,15 +79,22 @@ func (c *capstanignore) LoadFile(path string) error {
 }
 
 // AddPattern adds a pattern to be ignored.
-func (c *capstanignore) AddPattern(pattern string) error {
-	safePattern := transformCapstanignoreToRegex(pattern)
-	if compiled, err := regexp.Compile(safePattern); err == nil {
-		c.patterns = append(c.patterns, pattern)
-		c.compiledPatterns = append(c.compiledPatterns, compiled)
-	} else {
+func (c *capstanignore) AddPattern(pattern string) {
+	c.patterns = append(c.patterns, pattern)
+}
+
+func (c *capstanignore) CompilePatterns() error {
+	cumulativePattern := ""
+	for _, pattern := range c.patterns {
+		safePattern := transformCapstanignoreToRegex(pattern)
+		cumulativePattern = fmt.Sprintf("%s|%s", cumulativePattern, safePattern)
+	}
+	cumulativePattern = strings.TrimLeft(cumulativePattern, "|")
+	compiled, err := regexp.Compile(cumulativePattern)
+	if err != nil {
 		return err
 	}
-
+	c.compiledPattern = compiled
 	return nil
 }
 
@@ -94,12 +104,7 @@ func (c *capstanignore) AddPattern(pattern string) error {
 // is used, then IsIgnored will return false for all subfolders and
 // files inside the `/myfolder` directory.
 func (c *capstanignore) IsIgnored(path string) bool {
-	for _, pattern := range c.compiledPatterns {
-		if pattern.MatchString(path) {
-			return true
-		}
-	}
-	return false
+	return c.compiledPattern.MatchString(path)
 }
 
 func (c *capstanignore) PrintPatterns() {
