@@ -148,3 +148,21 @@ func RemoveOrphanedInstances(verbose bool) error {
 
 	return nil
 }
+
+func DeepCopyMap(original map[string]string) map[string]string {
+	res := make(map[string]string, 15)
+	for key, value := range original {
+		res[key] = value
+	}
+	return res
+}
+
+func ExcludeFromMap(m map[string]string, excludeKeys []string) map[string]string {
+	res := DeepCopyMap(m)
+	for _, key := range excludeKeys {
+		if _, exists := res[key]; exists {
+			delete(res, key)
+		}
+	}
+	return res
+}

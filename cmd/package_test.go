@@ -356,6 +356,220 @@ func (s *suite) TestAbsTarPathMatches(c *C) {
 	}
 }
 
+func (s *suite) TestRuntimeInheritance(c *C) {
+	// Prepare.
+	s.importFakeOSvBootstrapPkg(c)
+	s.importFakeDemoPkg(c)
+
+	m := []struct {
+		comment         string
+		runYamlText     string
+		demoRunYamlText string
+		expected        map[string]interface{}
+	}{
+		{
+			"basic",
+			`
+				runtime: native
+				config_set:
+				  ownBoot:
+				    base: "fake.demo:demoBoot1"
+			`,
+			"",
+			map[string]interface{}{
+				"demoBoot1": "echo Demo1",
+				"demoBoot2": "echo Demo2",
+				"ownBoot":   "echo Demo1",
+			},
+		},
+		{
+			"with own env",
+			`
+				runtime: native
+				config_set:
+				  ownBoot:
+				    base: "fake.demo:demoBoot1"
+				    env:
+				      PORT: 8000
+			`,
+			"",
+			map[string]interface{}{
+				"demoBoot1": "echo Demo1",
+				"demoBoot2": "echo Demo2",
+				"ownBoot":   "--env=PORT?=8000 echo Demo1",
+			},
+		},
+		{
+			"with own env forced",
+			`
+				runtime: native
+				config_set:
+				  ownBoot:
+				    base: "fake.demo:demoBoot1"
+				    env:
+				      PORT: 8000
+			`,
+			`
+				runtime: native
+				config_set:
+				  demoBoot1:
+				    bootcmd: echo Demo1
+				    env:
+				      PORT: 1111
+			`,
+			map[string]interface{}{
+				"demoBoot1": "--env=PORT?=1111 echo Demo1",
+				"ownBoot":   "--env=PORT?=8000 echo Demo1",
+			},
+		},
+		{
+			"with own env forced doesn't interfere",
+			`
+				runtime: native
+				config_set:
+				  ownBoot:
+				    base: "fake.demo:demoBoot1"
+				    env:
+				      PORT: 8000
+				  ownBoot2:
+				    base: "fake.demo:demoBoot1"
+			`,
+			`
+				runtime: native
+				config_set:
+				  demoBoot1:
+				    bootcmd: echo Demo1
+				    env:
+				      PORT: 1111
+			`,
+			map[string]interface{}{
+				"demoBoot1": "--env=PORT?=1111 echo Demo1",
+				"ownBoot":   "--env=PORT?=8000 echo Demo1",
+				"ownBoot2":  "--env=PORT?=1111 echo Demo1",
+			},
+		},
+		{
+			"with own env forced combined",
+			`
+				runtime: native
+				config_set:
+				  ownBoot:
+				    base: "fake.demo:demoBoot1"
+				    env:
+				      PORT: 8000
+			`,
+			`
+				runtime: native
+				config_set:
+				  demoBoot1:
+				    bootcmd: echo Demo1
+				    env:
+				      PORT: 1111
+				      HOST: localhost
+			`,
+			map[string]interface{}{
+				"demoBoot1": checkBootCmd("echo Demo1", []string{"--env=HOST?=localhost", "--env=PORT?=1111"}),
+				"ownBoot":   checkBootCmd("echo Demo1", []string{"--env=HOST?=localhost", "--env=PORT?=8000"}),
+			},
+		},
+	}
+	for i, args := range m {
+		c.Logf("CASE #%d: %s", i, args.comment)
+		s.requireFakeDemoPkg(c)
+		// Prepare
+		if args.demoRunYamlText != "" {
+			s.importFakeDemoPkgWithRunYaml(args.demoRunYamlText, c)
+		} else {
+			s.importFakeDemoPkg(c)
+		}
+		s.setRunYaml(args.runYamlText, c)
+
+		// This is what we're testing here.
+		err := CollectPackage(s.repo, s.packageDir, false, "", false)
+
+		// Expectations.
+		c.Assert(err, IsNil)
+		c.Check(filepath.Join(s.packageDir, "mpm-pkg", "run"), DirEquals, args.expected)
+	}
+}
+
+func (s *suite) TestRuntimeInheritInvalid(c *C) {
+	// Prepare.
+	s.importFakeOSvBootstrapPkg(c)
+	s.importFakeDemoPkg(c)
+	s.requireFakeDemoPkg(c)
+
+	m := []struct {
+		comment     string
+		runYamlText string
+		error       string
+	}{
+		{
+			"invalid package",
+			`
+			runtime: native
+			config_set:
+			  ownBoot:
+			    base: "unknown:demoBoot1"
+			`,
+			"Failed to inherit from 'unknown': package not included or has no meta/run.yaml",
+		},
+		{
+			"invalid config_set",
+			`
+			runtime: native
+			config_set:
+			  ownBoot:
+			    base: "fake.demo:unknown"
+			`,
+			"Failed to inherit 'fake.demo:unknown': config_set does not exist",
+		},
+		{
+			"empty base",
+			`
+			runtime: native
+			config_set:
+			  ownBoot:
+			    base:
+			`,
+			"Validation failed for configuration set 'ownBoot': 'bootcmd' must be provided",
+		},
+		{
+			"invalid base #1",
+			`
+			runtime: native
+			config_set:
+			  ownBoot:
+			    base: ":"
+			`,
+			"Failed to inherit from '': package not included or has no meta/run.yaml",
+		},
+		{
+			"invalid base #2",
+			`
+			runtime: native
+			config_set:
+			  ownBoot:
+			    base: "missing-column"
+			`,
+			"Validation failed for configuration set 'ownBoot': 'base' must be in format <pkg_name>:<config_set>",
+		},
+	}
+	for i, args := range m {
+		c.Logf("CASE #%d: %s", i, args.comment)
+
+		// Prepare
+		s.setRunYaml(args.runYamlText, c)
+
+		// This is what we're testing here.
+		err := CollectPackage(s.repo, s.packageDir, false, "", false)
+
+		// Expectations.
+		c.Assert(err, NotNil)
+		c.Check(err, ErrorMatches, args.error)
+	}
+}
+
 //
 // Utility
 //
@@ -397,6 +611,20 @@ func (s *suite) importFakeDemoPkg(c *C) {
 		"/meta/README.md":               DefaultText,
 		"/fake-demo-file.txt":           DefaultText,
 		"/data/fake-demo-data-file.txt": DefaultText,
+	}
+	s.importPkg(files, c)
+}
+
+func (s *suite) importFakeDemoPkgWithRunYaml(runYamlText string, c *C) {
+	packageYamlText := fixIndent(`
+		name: fake.demo
+		title: Fake Demo
+		author: Demo Author
+	`)
+
+	files := map[string]string{
+		"/meta/package.yaml": packageYamlText,
+		"/meta/run.yaml":     fixIndent(runYamlText),
 	}
 	s.importPkg(files, c)
 }
