@@ -9,18 +9,17 @@ package runtime
 
 import (
 	"fmt"
-	"io/ioutil"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
 type javaRuntime struct {
 	CommonRuntime `yaml:"-,inline"`
+	Xms           string   `yaml:"xms"`
+	Xmx           string   `yaml:"xmx"`
+	Classpath     []string `yaml:"classpath"`
+	JvmArgs       []string `yaml:"jvm_args"`
 	Main          string   `yaml:"main"`
 	Args          []string `yaml:"args"`
-	Classpath     []string `yaml:"classpath"`
-	JvmArgs       []string `yaml:"jvmargs"`
 }
 
 //
@@ -52,23 +51,16 @@ func (conf javaRuntime) Validate() error {
 	return conf.CommonRuntime.Validate(inherit)
 }
 func (conf javaRuntime) GetBootCmd(cmdConfs map[string]*CmdConfig) (string, error) {
-	cmd := fmt.Sprintf("java.so %s io.osv.isolated.MultiJarLoader -mains /etc/javamains", conf.GetJvmArgs())
-	return conf.CommonRuntime.BuildBootCmd(cmd, cmdConfs)
-}
-func (conf javaRuntime) OnCollect(targetPath string) error {
-	// Check if /etc folder is already available. This is where we are going to store
-	// Java launch definition.
-	etcDir := filepath.Join(targetPath, "etc")
-	if _, err := os.Stat(etcDir); os.IsNotExist(err) {
-		os.MkdirAll(etcDir, 0777)
-	}
-
-	err := ioutil.WriteFile(filepath.Join(etcDir, "javamains"), []byte(conf.GetCommandLine()), 0644)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	conf.Base = "openjdk8-zulu-compact1:java"
+	conf.setDefaultEnv(map[string]string{
+		"XMS":       conf.Xms,
+		"XMX":       conf.Xmx,
+		"CLASSPATH": strings.Join(conf.Classpath, ":"),
+		"JVM_ARGS":  conf.concatJvmArgs(),
+		"MAIN":      conf.Main,
+		"ARGS":      strings.Join(conf.Args, " "),
+	})
+	return conf.CommonRuntime.BuildBootCmd("", cmdConfs)
 }
 func (conf javaRuntime) GetYamlTemplate() string {
 	return `
@@ -83,7 +75,21 @@ main: <name>
 #                   - /
 #                   - /package1
 classpath:
-   <list>
+   - <list>
+
+# OPTIONAL
+# Initial and maximum JVM memory size.
+# Example value: xms: 512m
+xms: <value>
+xmx: <value>
+
+# OPTIONAL
+# A list of JVM args.
+# Example value: jvm_args:
+#                   - -Djava.net.preferIPv4Stack=true
+#                   - -Dhadoop.log.dir=/hdfs/logs
+jvm_args:
+   - <list>
 
 # OPTIONAL
 # A list of command line args used by the application.
@@ -91,16 +97,7 @@ classpath:
 #                   - argument1
 #                   - argument2
 args:
-   <list>
-
-# OPTIONAL
-# A list of JVM args (e.g. Xmx, Xms)
-# Example value: jvmargs:
-#                   - Xmx1000m
-#                   - Djava.net.preferIPv4Stack=true
-#                   - Dhadoop.log.dir=/hdfs/logs
-jvmargs:
-   <list>
+   - <list>
 ` + conf.CommonRuntime.GetYamlTemplate()
 }
 
@@ -108,25 +105,14 @@ jvmargs:
 // Utility
 //
 
-func (conf javaRuntime) GetCommandLine() string {
-	var cp, args string
+func (conf javaRuntime) concatJvmArgs() string {
+	res := strings.Join(conf.JvmArgs, " ")
 
-	if len(conf.Classpath) > 0 {
-		cp = "-cp " + strings.Join(conf.Classpath, ":")
+	// This is a workaround since runscript is currently unable to
+	// handle empty environment variable as a parameter. So we set
+	// dummy value unless user provided some actual value.
+	if res == "" {
+		return "-Dx=y"
 	}
-
-	if len(conf.Args) > 0 {
-		args = strings.Join(conf.Args, " ")
-	}
-
-	return strings.TrimSpace(fmt.Sprintf("%s %s %s", cp, conf.Main, args))
-}
-func (conf javaRuntime) GetJvmArgs() string {
-	vmargs := ""
-
-	for _, arg := range conf.JvmArgs {
-		vmargs += fmt.Sprintf("-%s ", arg)
-	}
-
-	return strings.TrimSpace(vmargs)
+	return res
 }

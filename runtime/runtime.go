@@ -65,10 +65,6 @@ type Runtime interface {
 	// is this runtime used for, 50 chars
 	GetRuntimeDescription() string
 
-	// OnCollect is a callback to run when collecting package
-	// (accepts directroy path of the package)
-	OnCollect(string) error
-
 	// GetYamlTemplate provides a string containing yaml content with
 	// as much help text as possible.
 	// NOTE: provide only runtime-specific part of yaml, see runtime/node.go for example.
@@ -106,6 +102,26 @@ func (r CommonRuntime) ForceEnv(env map[string]string) []string {
 	updated := make([]string, 15)
 	for key, value := range env {
 		if _, exists := r.Env[key]; exists {
+			r.Env[key] = value
+			updated = append(updated, key)
+		}
+	}
+	return updated
+}
+
+// setDefaultEnv sets default values for runtime's own environment.
+// Only non-existing keys are set and then a list of those is returned.
+func (r *CommonRuntime) setDefaultEnv(env map[string]string) []string {
+	if r.Env == nil {
+		r.Env = make(map[string]string, 15)
+	}
+
+	updated := make([]string, 15)
+	for key, value := range env {
+		if value == "" {
+			continue
+		}
+		if _, exists := r.Env[key]; !exists {
 			r.Env[key] = value
 			updated = append(updated, key)
 		}
