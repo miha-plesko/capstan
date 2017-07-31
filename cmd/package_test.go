@@ -98,6 +98,73 @@ func (*suite) TestMinimalPackageYaml(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *suite) TestInitPackage(c *C) {
+	m := []struct {
+		comment         string
+		pkg             core.Package
+		expectedPkgYaml string
+	}{
+		{
+			"simplest case",
+			core.Package{
+				Name:   "name",
+				Title:  "title",
+				Author: "author",
+			},
+			`
+				name: name
+				title: title
+				author: author
+				created: \d{4}-\d{2}-\d{2} \d{2}:\d{2}
+			`,
+		},
+		{
+			"with version",
+			core.Package{
+				Name:    "name",
+				Title:   "title",
+				Author:  "author",
+				Version: "1.2.3",
+			},
+			`
+				name: name
+				title: title
+				author: author
+				version: 1.2.3
+				created: \d{4}-\d{2}-\d{2} \d{2}:\d{2}
+			`,
+		},
+		{
+			"with require",
+			core.Package{
+				Name:    "name",
+				Title:   "title",
+				Author:  "author",
+				Require: []string{"demo1", "demo2"},
+			},
+			`
+				name: name
+				title: title
+				author: author
+				require:
+				- demo1
+				- demo2
+				created: \d{4}-\d{2}-\d{2} \d{2}:\d{2}
+			`,
+		},
+	}
+	for i, args := range m {
+		c.Logf("CASE #%d: %s", i, args.comment)
+
+		// This is what we're testing here.
+		err := InitPackage(s.packageDir, &args.pkg)
+
+		// Expectations.
+		c.Assert(err, IsNil)
+		c.Check(filepath.Join(s.packageDir, "meta", "package.yaml"), FileMatches, FixIndent(args.expectedPkgYaml))
+	}
+}
+
 func (*suite) TestComposeNonPackageFails(c *C) {
 	// We are going to create an empty temp directory.
 	tmp, _ := ioutil.TempDir("", "pkg")

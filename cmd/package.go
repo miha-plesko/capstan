@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mikelangelo-project/capstan/core"
 	"github.com/mikelangelo-project/capstan/runtime"
@@ -25,7 +26,10 @@ import (
 )
 
 func InitPackage(packagePath string, p *core.Package) error {
-	// We have to create hte package directory and it's metadata directory.
+	// Remember when the package was initialized.
+	p.Created = time.Now().Format("2006-01-02 15:04")
+
+	// We have to create the package directory and it's metadata directory.
 	metaPath := filepath.Join(packagePath, "meta")
 
 	fmt.Printf("Initializing package in %s\n", metaPath)

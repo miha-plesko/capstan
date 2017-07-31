@@ -15,5 +15,6 @@ import (
 // This way we are able to write inline yaml content that is
 // nicely aligned with other code.
 func FixIndent(s string) string {
+	s = strings.TrimSpace(s) + "\n"
 	return strings.Replace(s, "\t", "", -1)
 }
