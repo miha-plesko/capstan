@@ -29,6 +29,7 @@ type FileInfo struct {
 	Description string
 	Version     string
 	Created     string
+	Platform    string
 }
 
 type Contents struct {
@@ -52,22 +53,24 @@ func FileInfoHeader() string {
 }
 
 func (f *FileInfo) String() string {
-	return fmt.Sprintf("%-50s %-50s %-15s %-20s", f.Namespace+"/"+f.Name, f.Description, f.Version, f.Created)
+	name := strings.TrimLeft(f.Namespace+"/"+f.Name, "/")
+	res := fmt.Sprintf("%-50s %-50s %-15s %-20s %-15s", name, f.Description, f.Version, f.Created, f.Platform)
+	return strings.TrimSpace(res)
 }
 
-func MakeFileInfo(path, ns, name string) *FileInfo {
+func ParseIndexYaml(path, ns, name string) (*FileInfo, error) {
 	data, err := ioutil.ReadFile(filepath.Join(path, ns, name, "index.yaml"))
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	f := FileInfo{}
 	err = yaml.Unmarshal(data, &f)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	f.Namespace = ns
 	f.Name = name
-	return &f
+	return &f, nil
 }
 
 func RemoteFileInfo(repo_url string, path string) *FileInfo {

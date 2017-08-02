@@ -17,6 +17,8 @@ import (
 	"testing"
 )
 
+// TODO: Some of the tests below make use of Capstan binary that is cuurently installed
+// on the system. But this brings problems if we forget to build it and just run unit tests...
 func runCapstan(command []string, root string) *exec.Cmd {
 	c := exec.Command("capstan", command...)
 	c.Env = append(os.Environ(), fmt.Sprintf("CAPSTAN_ROOT=%s", root))

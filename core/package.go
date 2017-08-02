@@ -16,6 +16,8 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+const DATETIME_F string = "2006-01-02 15:04"
+
 type Package struct {
 	Name     string
 	Title    string

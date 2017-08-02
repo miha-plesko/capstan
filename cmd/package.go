@@ -27,7 +27,7 @@ import (
 
 func InitPackage(packagePath string, p *core.Package) error {
 	// Remember when the package was initialized.
-	p.Created = time.Now().Format("2006-01-02 15:04")
+	p.Created = time.Now().Format(core.DATETIME_F)
 
 	// We have to create the package directory and it's metadata directory.
 	metaPath := filepath.Join(packagePath, "meta")
